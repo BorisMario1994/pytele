@@ -1,0 +1,203 @@
+import re
+from telegram import Bot, InputMediaPhoto
+import logging
+from telegram.ext import Updater, CommandHandler, MessageHandler, Filters
+from PIL import Image
+import pytesseract
+import os
+
+
+# Replace 'YOUR_API_TOKEN' with the API token you received from the BotFather
+API_TOKEN = '6485022684:AAEyuouv0obuhWQTMu2P6o3nTl4yJDd8FMI'
+
+# Initialize the variable to store the input text
+input_text = ""
+image_paths = []
+pdf_path = ""
+
+# Create a bot object
+bot = Bot(token=API_TOKEN)
+
+
+def pdftoxml(pdf_path):
+    extracted_text = ""
+
+    # Open the PDF file
+    pdf_document = fitz.open(pdf_path)
+
+    # Read each page and extract text
+    for page_num in range(pdf_document.page_count):
+        page = pdf_document[page_num]
+        extracted_text += page.get_text()
+
+    # Create the root element of the XML tree
+    root = ET.Element("pdf_content")
+
+    # Split the extracted text into paragraphs
+    paragraphs = extracted_text.split('\n\n')
+
+    # Create XML elements for each paragraph
+    for paragraph in paragraphs:
+        para_element = ET.SubElement(root, "paragraph")
+        para_element.text = paragraph
+
+    # Create an ElementTree object
+    tree = ET.ElementTree(root)
+
+    # Save the XML to a file
+    xml_filename = pdf_path.replace(".pdf", ".xml")
+    tree.write(xml_filename, encoding="utf-8", xml_declaration=True)
+
+    # Close the PDF document
+    pdf_document.close()
+
+    return xml_filename
+
+def handle_pdf(update, context):
+    global pdf_path
+
+    # Check if the message contains a PDF
+    if update.message.document and update.message.document.mime_type == "application/pdf":
+        # Get the PDF file and store it locally
+        file = update.message.document.get_file()
+        pdf_path = f"pdf_{update.message.message_id}.pdf"
+        file.download(pdf_path)
+
+        # Respond to the user confirming the PDF received
+        context.bot.send_message(chat_id=update.effective_chat.id, text="PDF received and stored.")
+    else:
+        context.bot.send_message(chat_id=update.effective_chat.id, text="Please send a PDF file.")
+
+
+def gettext(update, context):
+    global input_text, image_paths
+    # Check if the message contains an image
+
+    # Check if there are any images stored
+    if not image_paths:
+        context.bot.send_message(chat_id=update.effective_chat.id, text="No images found. Please send an image first.")
+        return
+
+    # Process the stored images and extract stock codes
+    extracted_texts = []
+    for image_path in image_paths:
+        # Perform OCR to extract text from the image
+        extracted_text = pytesseract.image_to_string(Image.open(image_path))
+        extracted_texts.append(extracted_text)
+
+    combined_text = '\n'.join(extracted_texts)
+    # Extract stock codes with 4 uppercase letters using regex
+    stock_codes = re.findall(r'\b[A-Z]{4}\b', combined_text)
+
+    if stock_codes:
+        stock_codes = list(set(stock_codes))
+        # Send responses with the next 3 stock codes or less if there are fewer than 3 left
+        while stock_codes:
+            response = "/C " + ",".join(stock_codes[:3])
+            # response2 = "/C1 " + ",".join(stock_codes[:3])
+            # Send the response to the user
+            context.bot.send_message(chat_id=update.effective_chat.id, text=response)
+            # context.bot.send_message(chat_id=update.effective_chat.id, text=response2)
+            # Remove the sent stock codes from the list
+            stock_codes = stock_codes[3:]
+    else:
+        context.bot.send_message(chat_id=update.effective_chat.id, text="No valid stock codes found in the image.")
+
+    # Delete the stored image files
+    for image_path in image_paths:
+        if os.path.exists(image_path):
+            os.remove(image_path)
+
+       # Clear the stored images and texts
+    image_paths = []
+    input_text = ""
+
+
+def handle_photo(update, context):
+    # Check if the message contains an image
+    if update.message.photo:
+        # Get the last (largest) photo sent by the user
+        photo = update.message.photo[-1].get_file()
+
+        # Download the image and store its path
+        image_path = f"image_{update.message.message_id}.jpg"
+        photo.download(image_path)
+        image_paths.append(image_path)
+
+        # Respond to the user confirming the image received
+        context.bot.send_message(chat_id=update.effective_chat.id, text="Image received and stored.")
+    else:
+        context.bot.send_message(chat_id=update.effective_chat.id, text="Please send an image containing stock codes.")
+
+
+# Define the function to handle the text message
+def handle_text(update, context):
+    global input_text
+    # Store the received text message in the input_text variable
+    input_text = update.message.text
+    if input_text.startswith("Tanggal"):
+        # Automatically execute the /copy command
+        copy(update, context)
+
+
+def extract_stock_codes(input_text):
+    # Use regular expression to find stock codes in parentheses
+    stock_codes = re.findall(r'\b([A-Z]{4})\b', input_text)
+
+    return stock_codes
+
+def copy(update, context):
+    code = extract_stock_codes(input_text)
+    # Check if there are any remaining stock codes
+    if code:
+        # Send responses with the next 3 stock codes or less if there are fewer than 3 left
+        while code:
+            response = "/C " + ",".join(code[:3])
+            # response2 = "/C1 " + ",".join(code[:3])
+            # Send the response to the user
+            context.bot.send_message(chat_id=update.effective_chat.id, text=response)
+            # context.bot.send_message(chat_id=update.effective_chat.id, text=response2)
+            # Remove the sent stock codes from the list
+            code = code[3:]
+    else:
+        # If there are no more stock codes, send a message indicating that
+        context.bot.send_message(chat_id=update.effective_chat.id, text="No more stock codes to copy.")
+
+
+def start(update, context):
+    context.bot.send_message(chat_id=update.effective_chat.id, text="Bot has Started")
+
+
+def get_chat_id(update, context):
+    chat_id = update.effective_chat.id
+    context.bot.send_message(chat_id=chat_id, text=f"Your chat ID is: {chat_id}")
+
+
+def main():
+    # Create an updater object with your API token
+    updater = Updater(token=API_TOKEN, use_context=True)
+
+    # Get the dispatcher to register handlers
+    dp = updater.dispatcher
+
+    # Register the handle_text function to handle text messages
+    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_text))
+
+    # Register the copy function to handle the /copy command
+    dp.add_handler(CommandHandler("copy", copy))
+    dp.add_handler(CommandHandler("start", start))
+    dp.add_handler(MessageHandler(Filters.photo, handle_photo))
+    dp.add_handler(CommandHandler("get_chat_id", get_chat_id))
+    dp.add_handler(CommandHandler("gettext", gettext))
+    dp.add_handler(MessageHandler(Filters.document.mime_type("application/pdf"), handle_pdf))
+
+    # Start the Bot
+    updater.start_polling()
+
+    # Run the bot until you send a signal to stop it
+    updater.idle()
+
+
+if __name__ == '__main__':
+   # print(pdftoxml("D:\BorisBot\pdf_238.pdf"))
+   main()
