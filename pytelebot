@@ -71,46 +71,60 @@ def handle_pdf(update, context):
 
 def gettext(update, context):
     global input_text, image_paths
-    # Check if the message contains an image
 
-    # Check if there are any images stored
     if not image_paths:
         context.bot.send_message(chat_id=update.effective_chat.id, text="No images found. Please send an image first.")
         return
 
-    # Process the stored images and extract stock codes
     extracted_texts = []
     for image_path in image_paths:
-        # Perform OCR to extract text from the image
         extracted_text = pytesseract.image_to_string(Image.open(image_path))
         extracted_texts.append(extracted_text)
 
     combined_text = '\n'.join(extracted_texts)
-    # Extract stock codes with 4 uppercase letters using regex
-    stock_codes = re.findall(r'\b[A-Z]{4}\b', combined_text)
 
+    # === 1️⃣ EXISTING FUNCTIONALITY: extract 4-letter stock codes ===
+    stock_codes = re.findall(r'\b[A-Z]{4}\b', combined_text)
     if stock_codes:
         stock_codes = list(set(stock_codes))
-        # Send responses with the next 3 stock codes or less if there are fewer than 3 left
         while stock_codes:
-            response = "/C " + ",".join(stock_codes[:3])
-            # response2 = "/C1 " + ",".join(stock_codes[:3])
-            # Send the response to the user
+            response = "/C " + ",".join(stock_codes[:5])
             context.bot.send_message(chat_id=update.effective_chat.id, text=response)
-            # context.bot.send_message(chat_id=update.effective_chat.id, text=response2)
-            # Remove the sent stock codes from the list
-            stock_codes = stock_codes[3:]
+            stock_codes = stock_codes[5:]
     else:
         context.bot.send_message(chat_id=update.effective_chat.id, text="No valid stock codes found in the image.")
 
-    # Delete the stored image files
+    # === 2️⃣ NEW FEATURE: Detect 'TOP 5 BROKER VOLUME NET BUY ON <STOCK>' ===
+    match = re.search(r'TOP 5 BROKER VOLUME NET BUY ON\s+([A-Z]{2,5})', combined_text)
+    if match:
+        stock_name = match.group(1)  # e.g. 'EDGE' or 'BBCA'
+
+        # Find all 2-letter uppercase words, but exclude "ON" and other common ones
+        two_letter_codes = re.findall(r'\b[A-Z]{2}\b', combined_text)
+        excluded = {"ON"}
+        two_letter_codes = [code for code in two_letter_codes if code not in excluded]
+
+        # Remove duplicates while keeping order
+        two_letter_codes = list(dict.fromkeys(two_letter_codes))
+
+        if two_letter_codes:
+            formatted_codes = ",".join(["i70." + code for code in two_letter_codes])
+            response = "/c " + stock_name + " " + formatted_codes
+            context.bot.send_message(chat_id=update.effective_chat.id, text=response)
+        else:
+            context.bot.send_message(chat_id=update.effective_chat.id, text=f"Found stock: {stock_name}, but no 2-letter codes detected.")
+    else:
+        context.bot.send_message(chat_id=update.effective_chat.id, text="No 'TOP 5 BROKER VOLUME NET BUY ON' section found.")
+
+    # === 3️⃣ CLEANUP ===
     for image_path in image_paths:
         if os.path.exists(image_path):
             os.remove(image_path)
 
-       # Clear the stored images and texts
     image_paths = []
     input_text = ""
+
+
 
 
 def handle_photo(update, context):
@@ -135,14 +149,15 @@ def handle_text(update, context):
     global input_text
     # Store the received text message in the input_text variable
     input_text = update.message.text
-    if input_text.startswith("Tanggal"):
+    if input_text.startswith("Tanggal") or "/WL" in input_text:
         # Automatically execute the /copy command
         copy(update, context)
 
 
 def extract_stock_codes(input_text):
     # Use regular expression to find stock codes in parentheses
-    stock_codes = re.findall(r'\b([A-Z]{4})\b', input_text)
+    stock_codes = re.findall(r'(?<![A-Z])([A-Z]{4})(?![A-Z])', input_text)
+
 
     return stock_codes
 
@@ -152,13 +167,13 @@ def copy(update, context):
     if code:
         # Send responses with the next 3 stock codes or less if there are fewer than 3 left
         while code:
-            response = "/C " + ",".join(code[:3])
+            response = "/C " + ",".join(code[:5])
             # response2 = "/C1 " + ",".join(code[:3])
             # Send the response to the user
             context.bot.send_message(chat_id=update.effective_chat.id, text=response)
             # context.bot.send_message(chat_id=update.effective_chat.id, text=response2)
             # Remove the sent stock codes from the list
-            code = code[3:]
+            code = code[5:]
     else:
         # If there are no more stock codes, send a message indicating that
         context.bot.send_message(chat_id=update.effective_chat.id, text="No more stock codes to copy.")
@@ -201,3 +216,4 @@ def main():
 if __name__ == '__main__':
    # print(pdftoxml("D:\BorisBot\pdf_238.pdf"))
    main()
+
